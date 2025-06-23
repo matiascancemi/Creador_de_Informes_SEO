@@ -137,7 +137,7 @@ const prepareDataForGemini = (mainUrl: string, analysisData: any[]) => {
 };
 
 const PROMPT_TEMPLATE = (dataForSeoJsonString: string): string => `
-Eres un consultor SEO experto preparando un informe para un cliente. Analiza los siguientes datos técnicos de las 10 páginas más importantes de su sitio y genera un informe claro y accionable. No menciones las herramientas usadas.
+Eres un consultor SEO experto y estratega digital. Estás preparando un informe para un cliente que no tiene conocimientos técnicos. Se te ha proporcionado un análisis de las 10 páginas más importantes de su sitio web. Tu tarea es transformar estos datos en un informe claro, visual y accionable. No menciones las herramientas usadas. Usa emojis para hacerlo más amigable.
 
 Datos técnicos:
 \`\`\`json
@@ -145,19 +145,37 @@ ${dataForSeoJsonString}
 \`\`\`
 
 Instrucciones:
-1.  **Resumen Ejecutivo**: Presenta las puntuaciones promedio (performance, accessibility, etc.) y destaca las 3 recomendaciones de mayor impacto.
-2.  **Análisis por Categorías**: Agrupa los hallazgos en "Rendimiento Web" y "SEO On-Page". Explica los promedios e identifica problemas comunes.
-3.  **Plan de Acción**: Crea una lista de acciones priorizadas (Alta, Media, Baja), explicando qué hacer, por qué es importante y cómo solucionarlo, usando ejemplos de las URLs analizadas.
-4.  **Tono**: Usa un lenguaje profesional pero fácil de entender.
-5.  **Formato de Salida**: La respuesta DEBE SER ÚNICAMENTE el objeto JSON bien formado.
+1.  **Estrategia General (strategyOverview)**: Antes del resumen, crea una sección que explique en lenguaje muy sencillo qué se ha detectado y cuál es la estrategia de mejora general. Divídela en On-Page, Off-Page y Contenidos.
+2.  **Resumen Ejecutivo**: Presenta las puntuaciones promedio y destaca las 3 recomendaciones de mayor impacto.
+3.  **Análisis Detallado**: Agrupa los hallazgos en "Rendimiento Web" y "SEO On-Page". Explica los promedios e identifica problemas comunes.
+4.  **Plan de Acción**: Crea una lista de acciones priorizadas (Alta, Media, Baja), explicando qué, por qué y cómo, con ejemplos.
+5.  **Tono**: Amigable, educativo y profesional.
 
 Formato JSON de Salida Esperado:
 {
   "analyzedUrl": "[URL principal]",
+  "strategyOverview": {
+    "title": "🔍 Resumen de Hallazgos y Estrategia de Mejora",
+    "introduction": "[Párrafo introductorio en lenguaje sencillo sobre lo que se ha encontrado.]",
+    "sections": [
+      {
+        "title": "📈 SEO On-Page",
+        "description": "[Explicación de la estrategia para mejorar el SEO técnico y de contenido dentro de las páginas.]"
+      },
+      {
+        "title": "🔗 SEO Off-Page",
+        "description": "[Aunque no tengamos datos de backlinks, da una recomendación general sobre la importancia de construir autoridad externa.]"
+      },
+      {
+        "title": "✍️ Estrategia de Contenidos",
+        "description": "[Recomendación general sobre cómo el contenido puede mejorar el posicionamiento.]"
+      }
+    ]
+  },
   "executiveSummary": {
-    "title": "Resumen Ejecutivo",
+    "title": "📊 Resumen Ejecutivo",
     "overallScore": { "performance": 0, "accessibility": 0, "bestPractices": 0, "seo": 0 },
-    "introduction": "[Párrafo introductorio sobre la salud del sitio.]",
+    "introduction": "[Párrafo sobre la salud general del sitio basado en los promedios.]",
     "topRecommendations": [ { "priority": "Alta", "recommendation": "[Recomendación 1]", "description": "[Por qué es importante.]" } ]
   },
   "detailedAnalysis": [

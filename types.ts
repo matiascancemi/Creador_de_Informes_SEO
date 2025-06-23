@@ -1,5 +1,17 @@
 // types.ts
 
+// --- Tipos para la nueva sección de Estrategia ---
+interface StrategySection {
+  title: string;
+  description: string;
+}
+
+interface StrategyOverview {
+  title: string;
+  introduction: string;
+  sections: StrategySection[];
+}
+
 // --- Tipos para el Resumen Ejecutivo ---
 interface OverallScore {
   performance: number;
@@ -47,6 +59,7 @@ interface ActionPlanItem {
 // --- Estructura Principal del Informe ---
 export interface SeoReportData {
   analyzedUrl: string;
+  strategyOverview: StrategyOverview; // Nueva sección
   executiveSummary: ExecutiveSummary;
   detailedAnalysis: DetailedAnalysisSection[];
   actionPlan: ActionPlanItem[];
