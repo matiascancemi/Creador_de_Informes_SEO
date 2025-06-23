@@ -153,7 +153,9 @@ const mapDataForSeoToPromptStructure = (summary: DataForSeoOnPageSummaryItem, ur
       meta_description: summary.meta?.description,
       h1_tags: summary.meta?.htags?.H1 || (summary.meta?.htags?.h1 ? summary.meta.htags.h1 : []), // DataForSEO might use lowercase
       header_tags_structure: Object.entries(summary.meta?.htags || {}).reduce((acc, [key, value]) => {
-        acc[key.toUpperCase()] = value.length;
+        if (Array.isArray(value)) { // Comprobar si el valor es un array antes de acceder a .length
+          acc[key.toUpperCase()] = value.length;
+        }
         return acc;
       }, {} as Record<string, number>),
       content_quality_metrics: {
