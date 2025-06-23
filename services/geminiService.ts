@@ -5,6 +5,7 @@ import {
   GEMINI_MODEL_NAME,
   DATA_FOR_SEO_BASE_URL,
   // On-Page
+  ON_PAGE_PAGES_ENDPOINT,
   ON_PAGE_INSTANT_PAGES_ENDPOINT,
   ON_PAGE_LIGHTHOUSE_LIVE_ENDPOINT
   // Off-Page (Desactivado)
@@ -27,7 +28,21 @@ interface DataForSeoLighthousePayload {
   for_mobile?: boolean;
 }
 
+// Payload para OnPage Pages
+interface DataForSeoOnPagePagesPayload {
+    target: string;
+    limit?: number;
+    order_by?: string[];
+    filters?: any[];
+}
+
 // --- DataForSEO API Result Interfaces (Simplified) ---
+
+// Interfaz para el resultado de OnPage Pages
+interface DataForSeoOnPagePage {
+    url: string;
+    rank: number;
+}
 
 // Interfaz para el resultado de Lighthouse
 // Based on https://docs.dataforseo.com/v3/on_page/lighthouse/live
@@ -212,13 +227,44 @@ const getLighthouseReport = async (targetUrl: string, login: string, password: s
   }
 };
 
+// 3. Get Top 10 pages from a domain
+const getTopPages = async (targetUrl: string, login: string, password: string): Promise<string[]> => {
+    const payload: DataForSeoOnPagePagesPayload = {
+        target: targetUrl,
+        limit: 10,
+        order_by: ["rank,desc"],
+    };
+
+    try {
+        const response = await dataForSeoRequest(ON_PAGE_PAGES_ENDPOINT, login, password, 'POST', [payload]);
+
+        if (response.status_code !== 20000 || !response.tasks || response.tasks.length === 0) {
+            throw new Error(`OnPage Pages task failed: ${response.status_message}`);
+        }
+
+        const task = response.tasks[0];
+        if (task.status_code !== 20000 || !task.result || task.result.length === 0) {
+            throw new Error(`OnPage Pages task did not return a result: ${task.status_message}`);
+        }
+        
+        const pages = task.result[0].items as DataForSeoOnPagePage[];
+        return pages.map(page => page.url);
+
+    } catch (error) {
+        console.error(`Error fetching top pages for ${targetUrl}:`, error);
+        // Si falla, devolvemos solo la URL original para no romper el flujo
+        return [targetUrl];
+    }
+};
+
+
 // --- Data Mapping ---
 // This is a crucial step. Maps the complex DataForSEO response to the simplified structure Gemini expects.
 // This is a crucial step. Maps the complex DataForSEO response to the simplified structure Gemini expects.
 // This will need significant refinement based on actual API responses and desired report depth.
 const mapDataForSeoToPromptStructure = (
   url: string,
-  summary: DataForSeoOnPageSummaryItem,
+  summary: DataForSeoOnPageSummaryItem | null,
   lighthouse: DataForSeoLighthouseResult | null
 ): Partial<MockDataForSeoResponseForPrompt> => {
   
@@ -227,25 +273,25 @@ const mapDataForSeoToPromptStructure = (
   const mapped: Partial<MockDataForSeoResponseForPrompt> = {
     target_url: url,
     on_page_summary: {
-      page_title: summary.meta?.title,
-      meta_description: summary.meta?.description,
-      h1_tags: summary.meta?.htags?.H1 || (summary.meta?.htags?.h1 ? summary.meta.htags.h1 : []), // DataForSEO might use lowercase
-      header_tags_structure: Object.entries(summary.meta?.htags || {}).reduce((acc, [key, value]) => {
+      page_title: summary?.meta?.title,
+      meta_description: summary?.meta?.description,
+      h1_tags: summary?.meta?.htags?.H1 || (summary?.meta?.htags?.h1 ? summary.meta.htags.h1 : []), // DataForSEO might use lowercase
+      header_tags_structure: Object.entries(summary?.meta?.htags || {}).reduce((acc, [key, value]) => {
         if (Array.isArray(value)) { // Comprobar si el valor es un array antes de acceder a .length
           acc[key.toUpperCase()] = value.length;
         }
         return acc;
       }, {} as Record<string, number>),
       content_quality_metrics: {
-        word_count: summary.content?.plain_text_word_count,
-        text_to_html_ratio: summary.content?.plain_text_rate,
+        word_count: summary?.content?.plain_text_word_count,
+        text_to_html_ratio: summary?.content?.plain_text_rate,
         // duplicate_content_percentage needs a specific check or different endpoint.
         // For summary, 'duplicate_content' check might be a boolean.
-        duplicate_content_percentage: summary.checks?.duplicate_content ? 100 : 0, // Simplified: 100 if true, 0 if false/undefined
+        duplicate_content_percentage: summary?.checks?.duplicate_content ? 100 : 0, // Simplified: 100 if true, 0 if false/undefined
       },
       image_analysis: {
-        total_images: summary.total_images_count,
-        images_missing_alt_text: summary.images_without_alt_count,
+        total_images: summary?.total_images_count,
+        images_missing_alt_text: summary?.images_without_alt_count,
         // average_image_size_kb requires calculation or different endpoint
       },
       page_speed: {
@@ -253,26 +299,26 @@ const mapDataForSeoToPromptStructure = (
         largest_contentful_paint_ms: lighthouse?.audits.metrics?.details?.items[0]?.largest_contentful_paint,
         total_blocking_time_ms: lighthouse?.audits.metrics?.details?.items[0]?.total_blocking_time,
         cumulative_layout_shift: lighthouse?.audits.metrics?.details?.items[0]?.cumulative_layout_shift,
-        performance_score: lighthouse ? Math.round(lighthouse.categories.performance.score * 100) : summary.page_timing?.onpage_score,
+        performance_score: lighthouse ? Math.round(lighthouse.categories.performance.score * 100) : summary?.page_timing?.onpage_score,
       },
       mobile_friendliness: {
         // 'mobile_friendly' check might be in summary.checks.is_mobile_friendly
-        is_mobile_friendly: summary.checks?.mobile_friendly || summary.checks?.is_mobile_friendly, // check common variations
-        viewport_defined: summary.checks?.viewport,
+        is_mobile_friendly: summary?.checks?.mobile_friendly || summary?.checks?.is_mobile_friendly, // check common variations
+        viewport_defined: summary?.checks?.viewport,
       },
       internal_linking: {
-        total_internal_links: summary.internal_links_count,
-        broken_internal_links: summary.checks?.broken_links ? 1 : (summary.broken_links_count || 0), // if boolean, assume 1 to indicate issue
+        total_internal_links: summary?.internal_links_count,
+        broken_internal_links: summary?.checks?.broken_links ? 1 : (summary?.broken_links_count || 0), // if boolean, assume 1 to indicate issue
       },
       duplicate_tags: {
-        has_duplicate_title: summary.checks?.duplicate_title,
-        has_duplicate_meta_description: summary.checks?.duplicate_description, // Or duplicate_meta_description
+        has_duplicate_title: summary?.checks?.duplicate_title,
+        has_duplicate_meta_description: summary?.checks?.duplicate_description, // Or duplicate_meta_description
       },
-      is_indexable: !(summary.checks?.is_robots_txt_disallowed || summary.checks?.is_meta_robots_disallowed || summary.checks?.noindex_meta_tag || summary.checks?.noindex_header),
+      is_indexable: !(summary?.checks?.is_robots_txt_disallowed || summary?.checks?.is_meta_robots_disallowed || summary?.checks?.noindex_meta_tag || summary?.checks?.noindex_header),
       non_indexable_reason: 
-        summary.checks?.is_robots_txt_disallowed ? "robots.txt" :
-        (summary.checks?.is_meta_robots_disallowed || summary.checks?.noindex_meta_tag) ? "meta_noindex" :
-        summary.checks?.noindex_header ? "x-robots-tag_noindex" :
+        summary?.checks?.is_robots_txt_disallowed ? "robots.txt" :
+        (summary?.checks?.is_meta_robots_disallowed || summary?.checks?.noindex_meta_tag) ? "meta_noindex" :
+        summary?.checks?.noindex_header ? "x-robots-tag_noindex" :
         undefined,
     },
     // Off-page summary data is NOT available from OnPage Summary endpoint.
@@ -515,36 +561,44 @@ export const generateSeoReport = async (
      throw new Error("Credenciales de DataForSEO (login/password) no configuradas.");
   }
 
-  setLoadingMessage("Paso 1/3: Obteniendo análisis On-Page de DataForSEO...");
-  
+  setLoadingMessage("Paso 1/4: Identificando páginas principales del sitio...");
+  const topPages = await getTopPages(url, dataForSeoLogin, dataForSeoPassword);
+  console.log("Top pages to analyze:", topPages);
+
+  // Por ahora, solo analizaremos la primera página para validar el flujo.
+  const analysisUrl = topPages[0];
+  setLoadingMessage(`Paso 2/4: Analizando la página principal: ${analysisUrl.substring(0, 50)}...`);
+
   // Ejecutar llamadas a la API en paralelo para eficiencia
   const results = await Promise.allSettled([
-    getOnPageSummaryInstantly(url, dataForSeoLogin, dataForSeoPassword),
-    getLighthouseReport(url, dataForSeoLogin, dataForSeoPassword, true) // for mobile
+    getOnPageSummaryInstantly(analysisUrl, dataForSeoLogin, dataForSeoPassword),
+    getLighthouseReport(analysisUrl, dataForSeoLogin, dataForSeoPassword, true) // for mobile
   ]);
 
   // Procesar resultados
   const summaryResult = results[0];
   const lighthouseResult = results[1];
 
-  if (summaryResult.status === 'rejected') {
-    // Si la llamada principal (resumen) falla, no podemos continuar.
-    throw summaryResult.reason;
-  }
-  
-  const dataForSeoSummary = summaryResult.value;
+  // Aunque falle una, intentamos continuar con lo que tengamos.
+  const dataForSeoSummary = summaryResult.status === 'fulfilled' ? summaryResult.value : null;
   const lighthouseData = lighthouseResult.status === 'fulfilled' ? lighthouseResult.value : null;
 
+  if (!dataForSeoSummary && !lighthouseData) {
+      // Si ambas fallan, no podemos continuar.
+      const errorReason = summaryResult.status === 'rejected' ? summaryResult.reason : (lighthouseResult.status === 'rejected' ? lighthouseResult.reason : new Error("Ambas API fallaron"));
+      throw errorReason;
+  }
 
-  setLoadingMessage("Paso 2/3: Mapeando datos para el análisis de IA...");
+
+  setLoadingMessage("Paso 3/4: Mapeando datos para el análisis de IA...");
   // Map the real DataForSEO data to the structure Gemini expects
-  const mappedDataForPrompt = mapDataForSeoToPromptStructure(url, dataForSeoSummary, lighthouseData);
+  const mappedDataForPrompt = mapDataForSeoToPromptStructure(analysisUrl, dataForSeoSummary, lighthouseData);
   const dataForSeoJsonString = JSON.stringify(mappedDataForPrompt, null, 2);
   
   // console.log("Mapped DataForSEO for Gemini prompt:", dataForSeoJsonString);
 
 
-  setLoadingMessage("Paso 3/3: Generando informe con IA de Gemini...");
+  setLoadingMessage("Paso 4/4: Generando informe con IA de Gemini...");
   const ai = new GoogleGenAI({ apiKey: geminiApiKey });
   const prompt = PROMPT_TEMPLATE(url, dataForSeoJsonString);
 

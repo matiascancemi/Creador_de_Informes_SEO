@@ -7,6 +7,7 @@ export const DATA_FOR_SEO_PASSWORD_ENV_VAR = "DATA_FOR_SEO_PASSWORD";
 export const DATA_FOR_SEO_BASE_URL = "https://api.dataforseo.com";
 
 // --- On-Page Endpoints ---
+export const ON_PAGE_PAGES_ENDPOINT = "/v3/on_page/pages";
 export const ON_PAGE_INSTANT_PAGES_ENDPOINT = "/v3/on_page/instant_pages";
 export const ON_PAGE_LIGHTHOUSE_LIVE_ENDPOINT = "/v3/on_page/lighthouse/live/json";
 export const ON_PAGE_RESOURCES_LIVE_ENDPOINT = "/v3/on_page/resources/live";
