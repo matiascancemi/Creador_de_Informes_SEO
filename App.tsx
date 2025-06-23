@@ -3,7 +3,7 @@ import React, { useState, useCallback } from 'react';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { UrlInputForm } from './components/UrlInputForm';
-import { SeoReportDisplay } from './components/SeoReportDisplay';
+import VisualReport from './components/VisualReport'; // Importar el nuevo componente
 import { LoadingIndicator } from './components/LoadingIndicator';
 import { ErrorMessage } from './components/ErrorMessage';
 import { generateSeoReport } from './services/geminiService';
@@ -95,7 +95,7 @@ const App: React.FC = () => {
           
           {report && !isLoading && (!error || (!apiKeyErrorState.gemini && !apiKeyErrorState.dataForSeo)) && (
             <div className="mt-10 animate-fadeIn">
-              <SeoReportDisplay report={report} />
+              <VisualReport report={report} />
             </div>
           )}
         </div>

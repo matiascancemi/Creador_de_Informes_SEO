@@ -1,649 +1,239 @@
-
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
-import type { GeminiSeoReportResponse, SeoReportData } from '../types';
+import type { GeminiSeoReportResponse } from '../types';
 import { 
   GEMINI_MODEL_NAME,
   DATA_FOR_SEO_BASE_URL,
-  // On-Page
   ON_PAGE_PAGES_ENDPOINT,
   ON_PAGE_INSTANT_PAGES_ENDPOINT,
   ON_PAGE_LIGHTHOUSE_LIVE_ENDPOINT
-  // Off-Page (Desactivado)
-  // BACKLINKS_SUMMARY_LIVE_ENDPOINT
 } from '../constants';
 
-// --- DataForSEO API Interaction ---
-
-// Payload para el endpoint instant_pages
-interface DataForSeoInstantPayload {
-  url: string;
-  load_resources?: boolean;
-  enable_javascript?: boolean;
-  // Add other parameters as needed from https://docs.dataforseo.com/v3/on_page/instant_pages
-}
-
-// Payload para Lighthouse
-interface DataForSeoLighthousePayload {
-  url: string;
-  for_mobile?: boolean;
-}
-
-// Payload para OnPage Pages
-interface DataForSeoOnPagePagesPayload {
-    target: string;
-    limit?: number;
-    order_by?: string[];
-    filters?: any[];
-}
+// --- DataForSEO API Payloads ---
+interface DataForSeoInstantPayload { url: string; load_resources?: boolean; enable_javascript?: boolean; }
+interface DataForSeoLighthousePayload { url: string; for_mobile?: boolean; }
+interface DataForSeoOnPagePagesPayload { target: string; limit?: number; order_by?: string[]; }
 
 // --- DataForSEO API Result Interfaces (Simplified) ---
-
-// Interfaz para el resultado de OnPage Pages
-interface DataForSeoOnPagePage {
-    url: string;
-    rank: number;
-}
-
-// Interfaz para el resultado de Lighthouse
-// Based on https://docs.dataforseo.com/v3/on_page/lighthouse/live
+interface DataForSeoOnPagePage { url: string; rank: number; }
 interface DataForSeoLighthouseResult {
-  lighthouse_version: string;
+  categories: {
+    performance: { score: number | null };
+    accessibility: { score: number | null };
+    "best-practices": { score: number | null };
+    seo: { score: number | null };
+  };
   audits: {
-    "final-screenshot": {
-      details?: {
-        data: string; // base64 image
-      }
-    },
-    "metrics": {
+    metrics?: {
       details?: {
         items: Array<{
           largest_contentful_paint?: number;
-          cumulative_layout_shift?: number;
           total_blocking_time?: number;
-          interactive?: number; // TTI
+          cumulative_layout_shift?: number;
         }>
       }
     }
-    // Se pueden agregar más auditorías según sea necesario
-  };
-  categories: {
-    performance: {
-      score: number; // 0-1
-    },
-    accessibility: {
-      score: number;
-    },
-    "best-practices": {
-      score: number;
-    },
-    seo: {
-      score: number;
-    }
   }
 }
-
+interface DataForSeoOnPageSummaryItem {
+  meta?: { title?: string; description?: string; htags?: Record<string, string[]>; };
+  content?: { plain_text_word_count?: number; plain_text_rate?: number; };
+  checks?: Record<string, boolean>;
+  page_timing?: { onpage_score?: number; };
+  total_images_count?: number;
+  images_without_alt_count?: number;
+  internal_links_count?: number;
+  broken_links_count?: number;
+}
 interface DataForSeoTaskResponse {
   status_code: number;
   status_message: string;
-  tasks_count?: number;
-  tasks_error?: number;
-  tasks?: Array<{
-    id: string;
-    status_code: number;
-    status_message: string;
-    data?: any;
-    result?: any; // For summary, result is an array
-  }>;
+  tasks?: Array<{ status_code: number; status_message: string; result?: any[]; }>;
 }
 
-// Simplified structure for OnPage Summary result item
-// Based on https://docs.dataforseo.com/v3/on_page/summary/
-interface DataForSeoOnPageSummaryItem {
-  meta?: {
-    title?: string;
-    description?: string;
-    canonical?: string;
-    htags?: Record<string, string[]>; // e.g. { H1: ["title1"], H2: ["title2"]}
-  };
-  content?: {
-    plain_text_word_count?: number;
-    plain_text_rate?: number; // text to html ratio
-    duplicate_content?: boolean; // This might be from a different check, summary provides overall
-  };
-  checks?: Record<string, boolean>; // e.g., "no_image_alt": true, "duplicate_title": false
-  page_timing?: { // units are in seconds, need to convert to ms for LCP/TBT
-    time_to_interactive?: number;
-    dom_complete?: number;
-    largest_contentful_paint?: number; 
-    first_input_delay?: number; // TBT is approximated or from a different specific check
-    cumulative_layout_shift?: number;
-    onpage_score?: number; // 0-100
-  };
-  total_images_count?: number;
-  images_without_alt_count?: number;
-  total_links_count?: number; // internal + external
-  internal_links_count?: number;
-  broken_links_count?: number; // from checks
-  is_https?: boolean;
-  is_http?: boolean;
-  is_canonical?: boolean;
-  // mobile_friendly check might be in 'checks' or needs a specific endpoint
-  // indexable related checks like 'is_robots_txt_disallowed', 'is_meta_robots_disallowed'
-}
-
-
-// Helper to make authenticated requests to DataForSEO API
-const dataForSeoRequest = async (
-  endpoint: string,
-  login: string,
-  password: string,
-  method: 'GET' | 'POST' = 'POST',
-  body: any = null
-): Promise<DataForSeoTaskResponse> => {
+// --- Helper to make authenticated requests ---
+const dataForSeoRequest = async (endpoint: string, login: string, password: string, method: 'POST' = 'POST', body: any = null): Promise<DataForSeoTaskResponse> => {
   const url = DATA_FOR_SEO_BASE_URL + endpoint;
-  const headers = new Headers();
-  headers.append('Authorization', 'Basic ' + btoa(`${login}:${password}`));
-  headers.append('Content-Type', 'application/json');
-
-  const options: RequestInit = {
-    method,
-    headers,
-  };
-
-  if (body && method === 'POST') {
-    options.body = JSON.stringify(body);
-  }
+  const headers = new Headers({
+    'Authorization': 'Basic ' + btoa(`${login}:${password}`),
+    'Content-Type': 'application/json'
+  });
+  const options: RequestInit = { method, headers, body: body ? JSON.stringify(body) : null };
   
-  console.log(`DataForSEO Request: ${method} ${url}`, body ? `Body: ${JSON.stringify(body).substring(0,100)}...` : "");
-
-
+  console.log(`DataForSEO Request: ${method} ${url}`, body ? `Body: ${JSON.stringify(body).substring(0, 100)}...` : "");
+  
   const response = await fetch(url, options);
   if (!response.ok) {
     const errorText = await response.text();
     console.error(`DataForSEO API error: ${response.status} ${response.statusText}`, errorText);
-    throw new Error(`DataForSEO API error (${endpoint}): ${response.status} ${response.statusText}. ${errorText.substring(0,200)}`);
+    throw new Error(`DataForSEO API error (${endpoint}): ${response.status} ${response.statusText}. ${errorText.substring(0, 200)}`);
   }
   return response.json();
 };
 
-// 1. Get OnPage Summary results instantly (Live Mode)
-const getOnPageSummaryInstantly = async (targetUrl: string, login: string, password: string): Promise<DataForSeoOnPageSummaryItem> => {
-  const payload: DataForSeoInstantPayload = {
-    url: targetUrl,
-    load_resources: true,
-    enable_javascript: false, // Habilitar si es necesario, aumenta el costo y el tiempo
-  };
-  
-  // El endpoint instant_pages espera un objeto, no un array de objetos.
-  const response = await dataForSeoRequest(ON_PAGE_INSTANT_PAGES_ENDPOINT, login, password, 'POST', [payload]);
-
-  // Comprobaciones de seguridad mejoradas para evitar errores de 'length' en nulos.
-  if (response.status_code !== 20000 || !response.tasks || response.tasks.length === 0) {
-    throw new Error(`DataForSEO task failed or returned no tasks: ${response.status_message}. Full response: ${JSON.stringify(response)}`);
-  }
-
-  const task = response.tasks[0];
-  if (!task.result || task.result.length === 0) {
-      throw new Error(`Task from DataForSEO did not return a result array or it was empty. Status: ${task.status_message}. Full response: ${JSON.stringify(response)}`);
-  }
-  
-  // La estructura de la respuesta de instant_pages es un poco diferente.
-  // El resultado está en tasks[0].result[0].items[0]
-  const resultItem = task.result[0];
-  if (!resultItem || !resultItem.items || resultItem.items.length === 0) {
-     throw new Error(`No summary items found in DataForSEO instant response for ${targetUrl}. Full response: ${JSON.stringify(response)}`);
-  }
-
-  return resultItem.items[0] as DataForSeoOnPageSummaryItem;
-};
-
-// 2. Get Lighthouse report instantly (Live Mode)
-const getLighthouseReport = async (targetUrl: string, login: string, password: string, forMobile: boolean = false): Promise<DataForSeoLighthouseResult | null> => {
-  const payload: DataForSeoLighthousePayload = {
-    url: targetUrl,
-    for_mobile: forMobile,
-  };
-
+// --- API Fetching Functions ---
+const getOnPageSummaryInstantly = async (url: string, login: string, password: string): Promise<DataForSeoOnPageSummaryItem | null> => {
   try {
-    const response = await dataForSeoRequest(ON_PAGE_LIGHTHOUSE_LIVE_ENDPOINT, login, password, 'POST', [payload]);
-
-    if (response.status_code !== 20000 || !response.tasks || response.tasks.length === 0) {
-      console.warn(`Lighthouse task failed or returned no tasks: ${response.status_message}`);
+    const response = await dataForSeoRequest(ON_PAGE_INSTANT_PAGES_ENDPOINT, login, password, 'POST', [{ url, load_resources: true, enable_javascript: false }]);
+    if (response.status_code !== 20000 || !response.tasks?.[0]?.result?.[0]?.items?.[0]) {
+      console.warn(`Could not get OnPage Summary for ${url}: ${response.tasks?.[0]?.status_message || response.status_message}`);
       return null;
     }
-
-    const task = response.tasks[0];
-    if (task.status_code !== 20000 || !task.result || task.result.length === 0) {
-      console.warn(`Lighthouse task did not return a result. Status: ${task.status_message}`);
-      return null;
-    }
-    
-    // Corregido: El resultado de Lighthouse no está anidado en 'items'.
-    return task.result[0] as DataForSeoLighthouseResult;
-
+    return response.tasks[0].result[0].items[0];
   } catch (error) {
-    console.error(`Error fetching Lighthouse report for ${targetUrl}:`, error);
-    return null; // No detener todo el proceso si Lighthouse falla
+    console.error(`Error in getOnPageSummaryInstantly for ${url}:`, error);
+    return null;
   }
 };
 
-// 3. Get Top 10 pages from a domain
-const getTopPages = async (targetUrl: string, login: string, password: string): Promise<string[]> => {
-    const payload: DataForSeoOnPagePagesPayload = {
-        target: targetUrl,
-        limit: 10,
-        order_by: ["rank,desc"],
-    };
-
-    try {
-        const response = await dataForSeoRequest(ON_PAGE_PAGES_ENDPOINT, login, password, 'POST', [payload]);
-
-        if (response.status_code !== 20000 || !response.tasks || response.tasks.length === 0) {
-            throw new Error(`OnPage Pages task failed: ${response.status_message}`);
-        }
-
-        const task = response.tasks[0];
-        if (task.status_code !== 20000 || !task.result || task.result.length === 0) {
-            throw new Error(`OnPage Pages task did not return a result: ${task.status_message}`);
-        }
-        
-        const pages = task.result[0].items as DataForSeoOnPagePage[];
-        return pages.map(page => page.url);
-
-    } catch (error) {
-        console.error(`Error fetching top pages for ${targetUrl}:`, error);
-        // Si falla, devolvemos solo la URL original para no romper el flujo
-        return [targetUrl];
+const getLighthouseReport = async (url: string, login: string, password: string): Promise<DataForSeoLighthouseResult | null> => {
+  try {
+    const response = await dataForSeoRequest(ON_PAGE_LIGHTHOUSE_LIVE_ENDPOINT, login, password, 'POST', [{ url, for_mobile: true }]);
+    if (response.status_code !== 20000 || !response.tasks?.[0]?.result?.[0]) {
+      console.warn(`Could not get Lighthouse report for ${url}: ${response.tasks?.[0]?.status_message || response.status_message}`);
+      return null;
     }
+    return response.tasks[0].result[0];
+  } catch (error) {
+    console.error(`Error in getLighthouseReport for ${url}:`, error);
+    return null;
+  }
 };
 
-
-// --- Data Mapping ---
-// This is a crucial step. Maps the complex DataForSEO response to the simplified structure Gemini expects.
-// This is a crucial step. Maps the complex DataForSEO response to the simplified structure Gemini expects.
-// This will need significant refinement based on actual API responses and desired report depth.
-const mapDataForSeoToPromptStructure = (
-  url: string,
-  summary: DataForSeoOnPageSummaryItem | null,
-  lighthouse: DataForSeoLighthouseResult | null
-): Partial<MockDataForSeoResponseForPrompt> => {
-  
-  // This is the structure Gemini was trained on with the mock data. We adapt to it.
-  // We'll call this MockDataForSeoResponseForPrompt as it's what we *feed* to the prompt.
-  const mapped: Partial<MockDataForSeoResponseForPrompt> = {
-    target_url: url,
-    on_page_summary: {
-      page_title: summary?.meta?.title,
-      meta_description: summary?.meta?.description,
-      h1_tags: summary?.meta?.htags?.H1 || (summary?.meta?.htags?.h1 ? summary.meta.htags.h1 : []), // DataForSEO might use lowercase
-      header_tags_structure: Object.entries(summary?.meta?.htags || {}).reduce((acc, [key, value]) => {
-        if (Array.isArray(value)) { // Comprobar si el valor es un array antes de acceder a .length
-          acc[key.toUpperCase()] = value.length;
-        }
-        return acc;
-      }, {} as Record<string, number>),
-      content_quality_metrics: {
-        word_count: summary?.content?.plain_text_word_count,
-        text_to_html_ratio: summary?.content?.plain_text_rate,
-        // duplicate_content_percentage needs a specific check or different endpoint.
-        // For summary, 'duplicate_content' check might be a boolean.
-        duplicate_content_percentage: summary?.checks?.duplicate_content ? 100 : 0, // Simplified: 100 if true, 0 if false/undefined
-      },
-      image_analysis: {
-        total_images: summary?.total_images_count,
-        images_missing_alt_text: summary?.images_without_alt_count,
-        // average_image_size_kb requires calculation or different endpoint
-      },
-      page_speed: {
-        // Usar datos de Lighthouse si están disponibles, si no, los del resumen.
-        largest_contentful_paint_ms: lighthouse?.audits.metrics?.details?.items[0]?.largest_contentful_paint,
-        total_blocking_time_ms: lighthouse?.audits.metrics?.details?.items[0]?.total_blocking_time,
-        cumulative_layout_shift: lighthouse?.audits.metrics?.details?.items[0]?.cumulative_layout_shift,
-        performance_score: lighthouse ? Math.round(lighthouse.categories.performance.score * 100) : summary?.page_timing?.onpage_score,
-      },
-      mobile_friendliness: {
-        // 'mobile_friendly' check might be in summary.checks.is_mobile_friendly
-        is_mobile_friendly: summary?.checks?.mobile_friendly || summary?.checks?.is_mobile_friendly, // check common variations
-        viewport_defined: summary?.checks?.viewport,
-      },
-      internal_linking: {
-        total_internal_links: summary?.internal_links_count,
-        broken_internal_links: summary?.checks?.broken_links ? 1 : (summary?.broken_links_count || 0), // if boolean, assume 1 to indicate issue
-      },
-      duplicate_tags: {
-        has_duplicate_title: summary?.checks?.duplicate_title,
-        has_duplicate_meta_description: summary?.checks?.duplicate_description, // Or duplicate_meta_description
-      },
-      is_indexable: !(summary?.checks?.is_robots_txt_disallowed || summary?.checks?.is_meta_robots_disallowed || summary?.checks?.noindex_meta_tag || summary?.checks?.noindex_header),
-      non_indexable_reason: 
-        summary?.checks?.is_robots_txt_disallowed ? "robots.txt" :
-        (summary?.checks?.is_meta_robots_disallowed || summary?.checks?.noindex_meta_tag) ? "meta_noindex" :
-        summary?.checks?.noindex_header ? "x-robots-tag_noindex" :
-        undefined,
-    },
-    // Off-page summary data is NOT available from OnPage Summary endpoint.
-    // Gemini will be instructed that this data might be missing.
-    off_page_summary: { 
-        // Estos campos se dejarán indefinidos ya que la API de Backlinks no está activa.
-        estimated_domain_authority: undefined,
-        referring_domains_count: undefined,
-        backlinks_count: undefined,
+const getTopPages = async (target: string, login: string, password: string): Promise<string[]> => {
+  try {
+    const response = await dataForSeoRequest(ON_PAGE_PAGES_ENDPOINT, login, password, 'POST', [{ target, limit: 50 }]);
+    if (response.status_code !== 20000 || !response.tasks?.[0]?.result?.[0]?.items) {
+      console.warn(`Could not get top pages for ${target}, falling back to target itself. Reason: ${response.tasks?.[0]?.status_message || response.status_message}`);
+      return [target];
     }
-  };
-  return mapped;
+    const pages = response.tasks[0].result[0].items as DataForSeoOnPagePage[];
+    const sortedPages = pages.sort((a, b) => b.rank - a.rank);
+    return sortedPages.slice(0, 10).map(page => page.url);
+  } catch (error) {
+    console.error(`Error in getTopPages for ${target}:`, error);
+    return [target];
+  }
 };
 
-// This is the structure we will create from real DataForSEO data to feed into the prompt
-// It's based on the original MockDataForSeoResponse structure for compatibility with the existing prompt.
-interface MockDataForSeoResponseForPrompt {
-  target_url: string;
-  on_page_summary: {
-    page_title?: string;
-    meta_description?: string;
-    h1_tags?: string[];
-    header_tags_structure?: Record<string, number>;
-    content_quality_metrics?: {
-      word_count?: number;
-      text_to_html_ratio?: number;
-      duplicate_content_percentage?: number; 
-    };
-    image_analysis?: {
-      total_images?: number;
-      images_missing_alt_text?: number;
-      average_image_size_kb?: number;
-    };
-    page_speed?: {
-      largest_contentful_paint_ms?: number;
-      total_blocking_time_ms?: number;
-      cumulative_layout_shift?: number;
-      performance_score?: number; 
-    };
-    mobile_friendliness?: {
-      is_mobile_friendly?: boolean;
-      viewport_defined?: boolean;
-    };
-    internal_linking?: {
-      total_internal_links?: number;
-      unique_internal_links?: number; // Might not be directly available, summay gives total internal
-      broken_internal_links?: number;
-    };
-    duplicate_tags?: {
-        has_duplicate_title?: boolean;
-        has_duplicate_meta_description?: boolean;
-    };
-    is_indexable?: boolean;
-    non_indexable_reason?: string;
-  };
-  off_page_summary: { 
-    estimated_domain_authority?: number; 
-    referring_domains_count?: number;
-    backlinks_count?: number;
-  };
-}
+// --- Data Consolidation and Prompt Generation ---
+const prepareDataForGemini = (mainUrl: string, analysisData: any[]) => {
+    const validLighthouseReports = analysisData.map(d => d.lighthouse).filter(Boolean);
+    const averageScores = { performance: 0, accessibility: 0, best_practices: 0, seo: 0 };
+    if (validLighthouseReports.length > 0) {
+        const total = validLighthouseReports.length;
+        averageScores.performance = Math.round(validLighthouseReports.reduce((acc, r) => acc + (r.categories.performance.score || 0), 0) / total * 100);
+        averageScores.accessibility = Math.round(validLighthouseReports.reduce((acc, r) => acc + (r.categories.accessibility.score || 0), 0) / total * 100);
+        averageScores.best_practices = Math.round(validLighthouseReports.reduce((acc, r) => acc + (r.categories["best-practices"].score || 0), 0) / total * 100);
+        averageScores.seo = Math.round(validLighthouseReports.reduce((acc, r) => acc + (r.categories.seo.score || 0), 0) / total * 100);
+    }
 
+    const page_details = analysisData.map(({ url, summary, lighthouse }) => ({
+        url,
+        on_page_summary: { page_title: summary?.meta?.title, meta_description: summary?.meta?.description },
+        lighthouse_summary: { performance_score: lighthouse ? Math.round((lighthouse.categories.performance.score || 0) * 100) : undefined }
+    }));
 
-const getGeminiApiKey = (): string | undefined => {
-  return process.env.API_KEY;
+    return { main_url: mainUrl, average_scores: averageScores, page_details };
 };
 
-// Updated prompt to acknowledge real data source and potential missing off-page data
-const PROMPT_TEMPLATE = (url: string, dataForSeoJsonString: string): string => `
-Eres un experto analista SEO de renombre mundial. Se te ha proporcionado un conjunto de datos técnicos obtenidos directamente de la API OnPage Summary de DataForSEO para el sitio web con URL "${url}".
-Tu tarea es interpretar estos datos y generar un informe SEO exhaustivo y accionable.
+const PROMPT_TEMPLATE = (dataForSeoJsonString: string): string => `
+Eres un consultor SEO experto preparando un informe para un cliente. Analiza los siguientes datos técnicos de las 10 páginas más importantes de su sitio y genera un informe claro y accionable. No menciones las herramientas usadas.
 
-Datos de DataForSEO OnPage Summary:
+Datos técnicos:
 \`\`\`json
 ${dataForSeoJsonString}
 \`\`\`
 
-Instrucciones detalladas:
-1.  Analiza CUIDADOSAMENTE los datos de DataForSEO proporcionados. Estos son datos reales del endpoint 'OnPage Summary' y 'Lighthouse'.
-2.  Para cada "factorName" en "onPageAnalysis":
-    *   Rellena el campo "currentObservation" basándote ESTRICTAMENTE en los datos de DataForSEO.
-    *   Si un dato específico está presente (ej: \`page_title\`), úsalo directamente. Menciona el valor si es relevante.
-    *   Si un dato específico no está explícitamente en el JSON de DataForSEO (ej. algunos aspectos de \`off_page_summary\` o métricas muy detalladas no cubiertas por OnPage Summary), indícalo claramente (ej: "DataForSEO OnPage Summary no proporcionó datos específicos sobre X." o "No se encontraron datos sobre X en la información de DataForSEO OnPage Summary.").
-    *   "importance" debe explicar por qué el factor es crucial.
-    *   "recommendation" debe ser coherente con la "currentObservation" derivada de DataForSEO.
-3.  Para la sección "offPageAnalysis":
-    *   Ten en cuenta que el endpoint OnPage Summary de DataForSEO tiene un enfoque limitado en datos off-page.
-    *   Rellena "currentObservation" con la información disponible. Si no hay datos directos del OnPage Summary para un factor off-page, indícalo claramente (ej: "Los datos de OnPage Summary de DataForSEO no incluyen X.").
-    *   Las recomendaciones para off-page pueden ser más generales si los datos son limitados.
-4.  Para "overallSummary":
-    *   "strengths" y "weaknesses" deben basarse ÚNICAMENTE en tu análisis de los datos de DataForSEO.
-    *   "topRecommendations" deben ser acciones priorizadas basadas en los datos.
-5.  El idioma de todo el contenido del JSON de salida debe ser español.
-6.  La respuesta DEBE SER ÚNICAMENTE el objeto JSON bien formado, sin ningún texto adicional antes o después, y sin usar bloques de código markdown como \`\`\`json\`\`\` alrededor del JSON principal.
+Instrucciones:
+1.  **Resumen Ejecutivo**: Presenta las puntuaciones promedio (performance, accessibility, etc.) y destaca las 3 recomendaciones de mayor impacto.
+2.  **Análisis por Categorías**: Agrupa los hallazgos en "Rendimiento Web" y "SEO On-Page". Explica los promedios e identifica problemas comunes.
+3.  **Plan de Acción**: Crea una lista de acciones priorizadas (Alta, Media, Baja), explicando qué hacer, por qué es importante y cómo solucionarlo, usando ejemplos de las URLs analizadas.
+4.  **Tono**: Usa un lenguaje profesional pero fácil de entender.
+5.  **Formato de Salida**: La respuesta DEBE SER ÚNICAMENTE el objeto JSON bien formado.
 
-Formato JSON de Salida Esperado (igual que antes, pero las observaciones serán más realistas y algunas podrían indicar datos no disponibles):
+Formato JSON de Salida Esperado:
 {
-  "analyzedUrl": "${url}",
-  "onPageAnalysis": {
-    "title": "Análisis SEO On-Page (Basado en Datos Reales de DataForSEO)",
-    "introduction": "Este análisis detalla los aspectos SEO on-page de ${url}, interpretando los datos técnicos proporcionados por DataForSEO OnPage Summary para evaluar el estado actual y las oportunidades de mejora.",
-    "factors": [
-      {
-        "factorName": "Etiqueta de Título (Title Tag)",
-        "currentObservation": "[GEMINI: Basado en 'page_title' de DataForSEO. Ej: 'El título actual es \\\"...\". Tiene X caracteres.']",
-        "importance": "Crucial para SEO; es lo primero que ven usuarios y motores de búsqueda. Indica el contenido de la página.",
-        "recommendation": "[GEMINI: Recomendación basada en la observación. Ej: 'Optimizar para incluir palabra clave principal y mantenerse entre 50-60 caracteres.']"
-      },
-      // ... (resto de factores on-page como antes, Gemini adaptará currentObservation)
-       {
-        "factorName": "Meta Descripciones",
-        "currentObservation": "[GEMINI: Basado en 'meta_description' de DataForSEO. Indicar si está ausente o presente, y su posible calidad/longitud.]",
-        "importance": "Influyen en el CTR desde los SERPs, aunque no directamente en el ranking. Son un 'anuncio' para tu página.",
-        "recommendation": "[GEMINI: Crear descripciones únicas y atractivas (150-160 caracteres) con un CTA, si es necesario según la observación.]"
-      },
-      {
-        "factorName": "Encabezados (H1-H6)",
-        "currentObservation": "[GEMINI: Basado en 'h1_tags' y 'header_tags_structure' de DataForSEO. Ej: 'Se encontró X H1. La estructura general es...']",
-        "importance": "Estructuran el contenido para usuarios y motores de búsqueda, mejorando legibilidad y relevancia temática.",
-        "recommendation": "[GEMINI: Usar un solo H1. Organizar el contenido lógicamente con H2-H6. Incluir palabras clave relevantes.]"
-      },
-      {
-        "factorName": "Calidad y Optimización del Contenido",
-        "currentObservation": "[GEMINI: Basado en 'content_quality_metrics' (word_count, text_to_html_ratio, duplicate_content_percentage). Ej: 'La página tiene X palabras. El porcentaje de contenido duplicado es Y%.']",
-        "importance": "El contenido original, valioso y bien estructurado es fundamental para atraer y retener usuarios, y para el ranking.",
-        "recommendation": "[GEMINI: Mejorar la originalidad si 'duplicate_content_percentage' es alto. Asegurar profundidad y relevancia. Optimizar para palabras clave.]"
-      },
-      {
-        "factorName": "Optimización de Imágenes (Alt Text, Compresión)",
-        "currentObservation": "[GEMINI: Basado en 'image_analysis' (total_images, images_missing_alt_text, average_image_size_kb). Ej: 'Hay X imágenes, Y de ellas sin texto alternativo. El tamaño promedio es Z KB.']",
-        "importance": "El texto alternativo mejora la accesibilidad y el SEO de imágenes. La compresión afecta la velocidad de carga.",
-        "recommendation": "[GEMINI: Añadir texto alt descriptivo a todas las imágenes. Comprimir imágenes para reducir su peso sin perder calidad visual.]"
-      },
-      {
-        "factorName": "Velocidad del Sitio y Core Web Vitals",
-        "currentObservation": "[GEMINI: Basado en 'page_speed' (LCP, TBT, CLS, performance_score). Ej: 'LCP es Xms, CLS es Y. La puntuación de rendimiento es Z/100.']",
-        "importance": "Factor de ranking crucial. Impacta directamente la experiencia del usuario y las tasas de conversión.",
-        "recommendation": "[GEMINI: Identificar cuellos de botella y optimizar. Mejorar LCP, TBT y CLS según las métricas observadas.]"
-      },
-      {
-        "factorName": "Amigabilidad Móvil (Mobile-Friendliness)",
-        "currentObservation": "[GEMINI: Basado en 'mobile_friendliness' (is_mobile_friendly, viewport_defined). Ej: 'El sitio es/no es amigable para móviles según DataForSEO. Viewport definido: sí/no.']",
-        "importance": "Esencial para el ranking (mobile-first indexing) y para alcanzar a la mayoría de usuarios.",
-        "recommendation": "[GEMINI: Asegurar diseño responsive, elementos táctiles adecuados y legibilidad si se detectan problemas.]"
-      },
-      {
-        "factorName": "Enlaces Internos",
-        "currentObservation": "[GEMINI: Basado en 'internal_linking' (total_internal_links, broken_internal_links). Ej: 'Se detectaron X enlaces internos, Y de ellos rotos.']",
-        "importance": "Distribuyen la autoridad de la página (link equity), mejoran la navegación y ayudan a los motores a descubrir contenido.",
-        "recommendation": "[GEMINI: Corregir enlaces rotos. Crear una estrategia de enlazado interno lógica con anchor text descriptivos.]"
-      },
-      {
-        "factorName": "Indexabilidad",
-        "currentObservation": "[GEMINI: Basado en 'is_indexable' y 'non_indexable_reason'. Ej: 'La página es/no es indexable. Razón: robots.txt/meta_noindex/ninguna.']",
-        "importance": "Si una página no es indexable, no aparecerá en los resultados de búsqueda.",
-        "recommendation": "[GEMINI: Si no es indexable y debería serlo, revisar la configuración (robots.txt, meta tags, x-robots-tag).]"
-      },
-      {
-        "factorName": "Tags Duplicados",
-        "currentObservation": "[GEMINI: Basado en 'duplicate_tags'. Ej: 'Se detectó/no se detectó título duplicado. Se detectó/no se detectó meta descripción duplicada.']",
-        "importance": "Los tags duplicados pueden confundir a los motores de búsqueda y diluir la relevancia de las páginas.",
-        "recommendation": "[GEMINI: Asegurar títulos y meta descripciones únicos para cada página indexable.]"
-      }
-    ]
+  "analyzedUrl": "[URL principal]",
+  "executiveSummary": {
+    "title": "Resumen Ejecutivo",
+    "overallScore": { "performance": 0, "accessibility": 0, "bestPractices": 0, "seo": 0 },
+    "introduction": "[Párrafo introductorio sobre la salud del sitio.]",
+    "topRecommendations": [ { "priority": "Alta", "recommendation": "[Recomendación 1]", "description": "[Por qué es importante.]" } ]
   },
-  "offPageAnalysis": {
-    "title": "Análisis SEO Off-Page (Basado en Datos de DataForSEO OnPage Summary)",
-    "introduction": "Evaluación de factores SEO externos a ${url}, utilizando los datos disponibles de DataForSEO OnPage Summary. Estos factores influyen en la autoridad y percepción del sitio. El OnPage Summary ofrece datos limitados para el off-page.",
-    "factors": [
-      {
-        "factorName": "Perfil de Backlinks (Cantidad y Dominios de Referencia)",
-        "currentObservation": "[GEMINI: Basado en 'off_page_summary' (referring_domains_count, backlinks_count) del JSON provisto. Si no hay datos, indicar 'DataForSEO OnPage Summary no proporciona estos datos detallados.']",
-        "importance": "Los backlinks de calidad son un fuerte indicador de autoridad y confianza para los motores de búsqueda.",
-        "recommendation": "[GEMINI: Enfocarse en adquirir backlinks de alta calidad de sitios relevantes. Diversificar el perfil de enlaces. Si no hay datos, sugerir usar herramientas específicas de backlinks.]"
-      },
-      {
-        "factorName": "Autoridad de Dominio Estimada",
-        "currentObservation": "[GEMINI: Basado en 'off_page_summary' (estimated_domain_authority). Si no, indicar 'DataForSEO OnPage Summary no proporciona esta métrica.']",
-        "importance": "Una métrica predictiva de la capacidad de un sitio para rankear. Se construye con el tiempo.",
-        "recommendation": "[GEMINI: Mejorar la autoridad general del dominio mediante la creación de contenido de calidad y la obtención de backlinks autorizados. Si no hay datos, sugerir consultar herramientas especializadas.]"
-      },
-      {
-        "factorName": "Presencia en SEO Local (Google Business Profile)",
-        "currentObservation": "[GEMINI: 'DataForSEO OnPage Summary no proporciona directamente datos de Google Business Profile. Este factor requeriría una verificación manual o herramientas de SEO local.']",
-        "importance": "Fundamental para negocios con ubicaciones físicas o que sirven a áreas geográficas específicas.",
-        "recommendation": "Si es un negocio local, optimizar el perfil de Google Business: completar información, obtener reseñas, publicar NAPs consistentes."
-      },
-      {
-        "factorName": "Señales Sociales",
-        "currentObservation": "[GEMINI: 'Los datos de DataForSEO OnPage Summary no incluyen métricas directas de señales sociales.']",
-        "importance": "Aunque no son un factor de ranking directo, la actividad social puede influir indirectamente en la visibilidad y la generación de enlaces.",
-        "recommendation": "Mantener una presencia activa en redes sociales relevantes, compartir contenido y fomentar la interacción."
-      }
-    ]
-  },
-  "overallSummary": {
-    "title": "Resumen General y Prioridades Estratégicas (Datos de DataForSEO OnPage Summary)",
-    "strengths": [
-      "[GEMINI: Fortaleza 1 derivada de los datos de DataForSEO. Ej: 'Buena velocidad de carga (LCP de Xms).']",
-      "[GEMINI: Fortaleza 2 derivada de los datos de DataForSEO. Ej: 'Alto número de palabras por página (X palabras).']"
-    ],
-    "weaknesses": [
-      "[GEMINI: Debilidad 1 derivada de los datos de DataForSEO. Ej: 'X imágenes sin texto alternativo.']",
-      "[GEMINI: Debilidad 2 derivada de los datos de DataForSEO. Ej: 'CLS de Y, indica problemas de estabilidad visual.']"
-    ],
-    "topRecommendations": [
-      {
-        "priority": 1,
-        "action": "[GEMINI: Acción de alta prioridad basada en DataForSEO. Ej: 'Corregir las X imágenes sin texto alternativo.']",
-        "reasoning": "[GEMINI: Razón de la prioridad. Ej: 'Impacto directo en accesibilidad y SEO de imágenes, relativamente fácil de implementar.']"
-      },
-      // ... (resto de recomendaciones como antes, Gemini adaptará)
-      {
-        "priority": 2,
-        "action": "[GEMINI: Acción de prioridad media basada en DataForSEO. Ej: 'Mejorar el Cumulative Layout Shift (CLS) que actualmente es Y.']",
-        "reasoning": "[GEMINI: Razón. Ej: 'Afecta la experiencia del usuario y es un Core Web Vital.']"
-      },
-      {
-        "priority": 3,
-        "action": "[GEMINI: Acción de prioridad baja/media basada en DataForSEO. Ej: 'Considerar estrategias para aumentar la autoridad de dominio (actualmente X/100, si el dato está disponible).']",
-        "reasoning": "[GEMINI: Razón. Ej: 'Es un esfuerzo a largo plazo pero fundamental para la competitividad en rankings. Si no hay dato de autoridad, se puede omitir o generalizar.']"
-      }
-    ]
-  }
+  "detailedAnalysis": [
+    {
+      "category": "Rendimiento Web",
+      "score": 0,
+      "introduction": "[Explicación de la importancia del rendimiento.]",
+      "findings": [ { "title": "Core Web Vitals", "observation": "[Análisis de métricas.]", "recommendation": "[Recomendación general.]" } ]
+    }
+  ],
+  "actionPlan": [
+    { "priority": "Alta", "area": "Rendimiento", "action": "Optimizar imágenes.", "details": "Ejemplo de problema en página X.", "impact": "Mejora la velocidad y UX." }
+  ]
 }
 `;
 
+// --- Main Exported Function ---
 export const generateSeoReport = async (
   url: string, 
   dataForSeoLogin: string, 
   dataForSeoPassword: string,
   setLoadingMessage: (message: string) => void
 ): Promise<GeminiSeoReportResponse> => {
-  const geminiApiKey = getGeminiApiKey();
-  if (!geminiApiKey) {
-    console.error("API Key for Gemini is not configured.");
-    throw new Error("Clave API de Gemini no configurada. Revisa la configuración del entorno.");
-  }
-  if (!dataForSeoLogin || !dataForSeoPassword) {
-     throw new Error("Credenciales de DataForSEO (login/password) no configuradas.");
-  }
+  const geminiApiKey = process.env.API_KEY;
+  if (!geminiApiKey) throw new Error("Clave API de Gemini no configurada.");
+  if (!dataForSeoLogin || !dataForSeoPassword) throw new Error("Credenciales de DataForSEO no configuradas.");
 
-  setLoadingMessage("Paso 1/4: Identificando páginas principales del sitio...");
+  setLoadingMessage("Paso 1/3: Identificando páginas principales del sitio...");
   const topPages = await getTopPages(url, dataForSeoLogin, dataForSeoPassword);
   console.log("Top pages to analyze:", topPages);
 
-  // Por ahora, solo analizaremos la primera página para validar el flujo.
-  const analysisUrl = topPages[0];
-  setLoadingMessage(`Paso 2/4: Analizando la página principal: ${analysisUrl.substring(0, 50)}...`);
+  setLoadingMessage(`Paso 2/3: Analizando ${topPages.length} páginas en paralelo...`);
+  const analysisPromises = topPages.map(pageUrl => 
+    Promise.all([
+      getOnPageSummaryInstantly(pageUrl, dataForSeoLogin, dataForSeoPassword),
+      getLighthouseReport(pageUrl, dataForSeoLogin, dataForSeoPassword)
+    ])
+  );
+  const allResults = await Promise.all(analysisPromises);
 
-  // Ejecutar llamadas a la API en paralelo para eficiencia
-  const results = await Promise.allSettled([
-    getOnPageSummaryInstantly(analysisUrl, dataForSeoLogin, dataForSeoPassword),
-    getLighthouseReport(analysisUrl, dataForSeoLogin, dataForSeoPassword, true) // for mobile
-  ]);
+  const analysisData = allResults.map(([summary, lighthouse], index) => ({
+    url: topPages[index],
+    summary,
+    lighthouse,
+  }));
 
-  // Procesar resultados
-  const summaryResult = results[0];
-  const lighthouseResult = results[1];
-
-  // Aunque falle una, intentamos continuar con lo que tengamos.
-  const dataForSeoSummary = summaryResult.status === 'fulfilled' ? summaryResult.value : null;
-  const lighthouseData = lighthouseResult.status === 'fulfilled' ? lighthouseResult.value : null;
-
-  if (!dataForSeoSummary && !lighthouseData) {
-      // Si ambas fallan, no podemos continuar.
-      const errorReason = summaryResult.status === 'rejected' ? summaryResult.reason : (lighthouseResult.status === 'rejected' ? lighthouseResult.reason : new Error("Ambas API fallaron"));
-      throw errorReason;
+  if (analysisData.every(d => !d.summary && !d.lighthouse)) {
+    throw new Error("No se pudo obtener ningún dato para las páginas analizadas.");
   }
 
-
-  setLoadingMessage("Paso 3/4: Mapeando datos para el análisis de IA...");
-  // Map the real DataForSEO data to the structure Gemini expects
-  const mappedDataForPrompt = mapDataForSeoToPromptStructure(analysisUrl, dataForSeoSummary, lighthouseData);
+  setLoadingMessage("Paso 3/3: Consolidando datos y generando informe con IA...");
+  const mappedDataForPrompt = prepareDataForGemini(url, analysisData);
   const dataForSeoJsonString = JSON.stringify(mappedDataForPrompt, null, 2);
   
-  // console.log("Mapped DataForSEO for Gemini prompt:", dataForSeoJsonString);
-
-
-  setLoadingMessage("Paso 4/4: Generando informe con IA de Gemini...");
   const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-  const prompt = PROMPT_TEMPLATE(url, dataForSeoJsonString);
+  const prompt = PROMPT_TEMPLATE(dataForSeoJsonString);
 
   try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
+    const response = await ai.models.generateContent({
       model: GEMINI_MODEL_NAME,
       contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      },
+      config: { responseMimeType: "application/json" },
     });
 
     let jsonStr = response.text?.trim() || "";
-    
-    const fenceRegex = /^```(?:json)?\s*\n?(.*?)\n?\s*```$/s;
-    const match = jsonStr.match(fenceRegex);
-    if (match && match[1]) {
-      jsonStr = match[1].trim();
+    if (jsonStr.startsWith('```json')) {
+      jsonStr = jsonStr.slice(7, -3).trim();
     }
 
-    try {
-      const parsedData = JSON.parse(jsonStr) as GeminiSeoReportResponse;
-      if (
-        !parsedData.analyzedUrl ||
-        !parsedData.onPageAnalysis || !parsedData.onPageAnalysis.factors ||
-        !parsedData.offPageAnalysis || !parsedData.offPageAnalysis.factors ||
-        !parsedData.overallSummary || !parsedData.overallSummary.topRecommendations
-      ) {
-        console.error("Respuesta JSON de Gemini no tiene la estructura esperada:", parsedData);
-        throw new Error("La respuesta de la IA no tuvo el formato esperado. Intenta de nuevo.");
-      }
-      return parsedData;
-    } catch (e) {
-      console.error("Fallo al parsear la respuesta JSON de Gemini:", e, "\nRaw response text:\n", jsonStr);
-      throw new Error(`La respuesta de la IA no pudo ser procesada como JSON válido. Raw: ${jsonStr.substring(0,1000)}`);
-    }
-
+    return JSON.parse(jsonStr) as GeminiSeoReportResponse;
   } catch (error) {
-    console.error("Error al llamar a la API de Gemini:", error);
-    if (error instanceof Error && error.message.includes("API Key not valid")) {
-        throw new Error("Clave API de Gemini inválida. Por favor, verifica tu clave.");
+    console.error("Error al llamar o parsear la API de Gemini:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.includes("API Key not valid")) {
+        throw new Error("Clave API de Gemini inválida.");
     }
-     if (error instanceof Error && error.message.includes("quota")) {
-      throw new Error("Se ha excedido la cuota de la API de Gemini. Inténtalo más tarde.");
-    }
-    throw new Error(`Error de comunicación con el servicio de IA: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Error de comunicación con la IA: ${errorMessage}`);
   }
 };
