@@ -11,10 +11,10 @@ export const ON_PAGE_INSTANT_PAGES_ENDPOINT = "/v3/on_page/instant_pages";
 export const ON_PAGE_LIGHTHOUSE_LIVE_ENDPOINT = "/v3/on_page/lighthouse/live/json";
 export const ON_PAGE_RESOURCES_LIVE_ENDPOINT = "/v3/on_page/resources/live";
 
-// --- Off-Page Endpoints ---
-export const BACKLINKS_SUMMARY_LIVE_ENDPOINT = "/v3/backlinks/summary/live";
-export const BACKLINKS_REFERRING_DOMAINS_LIVE_ENDPOINT = "/v3/backlinks/referring_domains/live";
-export const DOMAIN_ANALYTICS_WHOIS_OVERVIEW_LIVE_ENDPOINT = "/v3/domain_analytics/whois/overview/live";
+// --- Off-Page Endpoints (Desactivados por ahora) ---
+// export const BACKLINKS_SUMMARY_LIVE_ENDPOINT = "/v3/backlinks/summary/live";
+// export const BACKLINKS_REFERRING_DOMAINS_LIVE_ENDPOINT = "/v3/backlinks/referring_domains/live";
+// export const DOMAIN_ANALYTICS_WHOIS_OVERVIEW_LIVE_ENDPOINT = "/v3/domain_analytics/whois/overview/live";
 
 
 // Las siguientes constantes ya no se utilizan con el modo "live"
