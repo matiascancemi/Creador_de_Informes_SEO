@@ -465,6 +465,8 @@ export const generateSeoReport = async (
   setLoadingMessage("Paso 1/4: Creando tarea de análisis en DataForSEO...");
   const taskId = await postOnPageTask(url, dataForSeoLogin, dataForSeoPassword);
   console.log("DataForSEO Task ID:", taskId);
+  console.log("DataForSEO Login:", dataForSeoLogin);
+  console.log("DataForSEO Password:", dataForSeoPassword);
 
   setLoadingMessage(`Paso 2/4: Esperando resultados de DataForSEO (Task ID: ${taskId.substring(0,8)}...).`);
   let polls = 0;
@@ -504,7 +506,7 @@ export const generateSeoReport = async (
       },
     });
 
-    let jsonStr = response.text.trim();
+    let jsonStr = response.text?.trim() || "";
     
     const fenceRegex = /^```(?:json)?\s*\n?(.*?)\n?\s*```$/s;
     const match = jsonStr.match(fenceRegex);
