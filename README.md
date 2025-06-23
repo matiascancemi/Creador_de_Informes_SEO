@@ -47,5 +47,4 @@ Este proyecto está configurado para ser desplegado en Vercel. Para configurar l
 
 *   El nombre del modelo Gemini a utilizar se define en la constante `GEMINI_MODEL_NAME` en el archivo `constants.ts` (actualmente "gemini-2.5-flash-preview-04-17").
 *   La URL base para la API de DataForSEO se define en la constante `DATA_FOR_SEO_BASE_URL` en el archivo `constants.ts` (actualmente "https://api.dataforseo.com").
-*   El intervalo de tiempo para verificar el estado de la tarea en DataForSEO se define en la constante `DATA_FOR_SEO_POLL_INTERVAL_MS` en el archivo `constants.ts` (actualmente 5000 ms).
-*   El número máximo de intentos para verificar el estado de la tarea en DataForSEO se define en la constante `DATA_FOR_SEO_MAX_POLLS` en el archivo `constants.ts` (actualmente 24).
+*   Las solicitudes a la API de DataForSEO se realizan en **modo "live"** utilizando el endpoint `v3/on_page/instant_pages`. Esto proporciona resultados inmediatos sin necesidad de esperas o reintentos.

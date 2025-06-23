@@ -4,24 +4,25 @@ import type { GeminiSeoReportResponse, SeoReportData } from '../types';
 import { 
   GEMINI_MODEL_NAME,
   DATA_FOR_SEO_BASE_URL,
-  ON_PAGE_TASK_POST_ENDPOINT,
-  ON_PAGE_ID_LIST_ENDPOINT,
-  ON_PAGE_SUMMARY_ENDPOINT,
-  DATA_FOR_SEO_POLL_INTERVAL_MS,
-  DATA_FOR_SEO_MAX_POLLS
+  ON_PAGE_INSTANT_PAGES_ENDPOINT, // Usaremos el endpoint de resultados instantáneos
+  // Los siguientes ya no son necesarios para el modo live
+  // ON_PAGE_TASK_POST_ENDPOINT,
+  // ON_PAGE_ID_LIST_ENDPOINT,
+  // ON_PAGE_SUMMARY_ENDPOINT,
+  // DATA_FOR_SEO_POLL_INTERVAL_MS,
+  // DATA_FOR_SEO_MAX_POLLS
 } from '../constants';
 
 // --- DataForSEO API Interaction ---
 
-interface DataForSeoTaskPostPayload {
-  target: string;
-  max_crawl_pages?: number;
+// Payload para el endpoint instant_pages
+interface DataForSeoInstantPayload {
+  url: string;
   load_resources?: boolean;
   enable_javascript?: boolean;
-  custom_js?: string;
-  tag?: string;
-  // Add other parameters as needed from https://docs.dataforseo.com/v3/on_page/task_post/
+  // Add other parameters as needed from https://docs.dataforseo.com/v3/on_page/instant_pages
 }
+
 
 interface DataForSeoTaskResponse {
   status_code: number;
@@ -107,62 +108,29 @@ const dataForSeoRequest = async (
   return response.json();
 };
 
-// 1. Post a new OnPage task
-const postOnPageTask = async (targetUrl: string, login: string, password: string, tag?: string): Promise<string> => {
-  const payload: DataForSeoTaskPostPayload[] = [{
-    target: targetUrl,
-    max_crawl_pages: 1, // For a single page summary, 1 is enough. Adjust if crawling site.
+// 1. Get OnPage Summary results instantly (Live Mode)
+const getOnPageSummaryInstantly = async (targetUrl: string, login: string, password: string): Promise<DataForSeoOnPageSummaryItem> => {
+  const payload: DataForSeoInstantPayload = {
+    url: targetUrl,
     load_resources: true,
-    enable_javascript: false, // Enable if needed, increases cost and time
-    // "render_js": false, // Alternative to enable_javascript for some scenarios
-    // "browser_preset": "desktop",
-    // "accept_language": "en-US,en;q=0.9", // Example
-    tag: tag || `seo_report_${Date.now()}`
-  }];
+    enable_javascript: false, // Habilitar si es necesario, aumenta el costo y el tiempo
+  };
   
-  const response = await dataForSeoRequest(ON_PAGE_TASK_POST_ENDPOINT, login, password, 'POST', payload);
-
-  if (response.status_code !== 20000 || !response.tasks || response.tasks.length === 0) {
-    throw new Error(`Failed to create DataForSEO task: ${response.status_message}`);
-  }
-  const taskId = response.tasks[0].id;
-  if (!taskId) {
-     throw new Error(`Failed to get task_id from DataForSEO task_post response: ${JSON.stringify(response)}`);
-  }
-  return taskId;
-};
-
-// 2. Check if a task is ready
-const isTaskReady = async (taskId: string, login: string, password: string): Promise<boolean> => {
-  const payload = [{ id: taskId }]; // Check status for specific task id
-  const response = await dataForSeoRequest(ON_PAGE_ID_LIST_ENDPOINT, login, password, 'POST', payload);
-
-  if (response.status_code !== 20000 || !response.tasks || response.tasks.length === 0) {
-    console.warn(`Could not get status for task ${taskId}: ${response.status_message}`);
-    return false; // Or throw error, depending on desired strictness
-  }
-  
-  const taskStatus = response.tasks[0];
-  // According to docs, for a completed task that has results, status_code within tasks array is 20000 and datetime_done is set.
-  // status_message could be "Ok."
-  // For tasks in progress, status_message might be "Task In Progress."
-  // For OnPage tasks specifically, the task object in id_list has a 'status' field: e.g. "in_progress", "completed"
-  // For this example, let's assume status_code 20000 in task details means ready to fetch results.
-  // And also check for datetime_done as an indicator (though not always present/reliable for all task types immediately)
-  // For 'On-Page' status_code 20000 in `tasks[0].status_code` indicates results are ready.
-  return taskStatus.status_code === 20000 && taskStatus.status_message === "Ok.";
-};
-
-// 3. Get OnPage Summary results
-const getOnPageSummary = async (taskId: string, login: string, password: string): Promise<DataForSeoOnPageSummaryItem> => {
-  const payload = [{ id: taskId }];
-  const response = await dataForSeoRequest(ON_PAGE_SUMMARY_ENDPOINT, login, password, 'POST', payload);
+  // El endpoint instant_pages espera un objeto, no un array de objetos.
+  const response = await dataForSeoRequest(ON_PAGE_INSTANT_PAGES_ENDPOINT, login, password, 'POST', [payload]);
 
   if (response.status_code !== 20000 || !response.tasks || response.tasks.length === 0 || !response.tasks[0].result || response.tasks[0].result.length === 0) {
-    throw new Error(`Failed to get OnPage Summary for task ${taskId}: ${response.status_message}. Full response: ${JSON.stringify(response)}`);
+    throw new Error(`Failed to get OnPage Instant Summary for url ${targetUrl}: ${response.status_message}. Full response: ${JSON.stringify(response)}`);
   }
-  // The result is an array, we take the first item
-  return response.tasks[0].result[0].items as DataForSeoOnPageSummaryItem;
+  
+  // La estructura de la respuesta de instant_pages es un poco diferente.
+  // El resultado está en tasks[0].result[0].items[0]
+  const resultItem = response.tasks[0].result[0];
+  if (!resultItem || !resultItem.items || resultItem.items.length === 0) {
+     throw new Error(`No summary items found in DataForSEO instant response for ${targetUrl}. Full response: ${JSON.stringify(response)}`);
+  }
+
+  return resultItem.items[0] as DataForSeoOnPageSummaryItem;
 };
 
 // --- Data Mapping ---
@@ -462,29 +430,8 @@ export const generateSeoReport = async (
      throw new Error("Credenciales de DataForSEO (login/password) no configuradas.");
   }
 
-  setLoadingMessage("Paso 1/4: Creando tarea de análisis en DataForSEO...");
-  const taskId = await postOnPageTask(url, dataForSeoLogin, dataForSeoPassword);
-  console.log("DataForSEO Task ID:", taskId);
-  console.log("DataForSEO Login:", dataForSeoLogin);
-  console.log("DataForSEO Password:", dataForSeoPassword);
-
-  setLoadingMessage(`Paso 2/4: Esperando resultados de DataForSEO (Task ID: ${taskId.substring(0,8)}...).`);
-  let polls = 0;
-  let taskReady = false;
-  while (polls < DATA_FOR_SEO_MAX_POLLS) {
-    taskReady = await isTaskReady(taskId, dataForSeoLogin, dataForSeoPassword);
-    if (taskReady) break;
-    polls++;
-    setLoadingMessage(`Paso 2/4: Esperando resultados... (Intento ${polls}/${DATA_FOR_SEO_MAX_POLLS})`);
-    await new Promise(resolve => setTimeout(resolve, DATA_FOR_SEO_POLL_INTERVAL_MS));
-  }
-
-  if (!taskReady) {
-    throw new Error(`DataForSEO task ${taskId} no completada después de ${DATA_FOR_SEO_MAX_POLLS} intentos. Revisa el estado de la tarea en DataForSEO.`);
-  }
-
-  setLoadingMessage("Paso 3/4: Obteniendo resumen del análisis de DataForSEO...");
-  const dataForSeoSummary = await getOnPageSummary(taskId, dataForSeoLogin, dataForSeoPassword);
+  setLoadingMessage("Paso 1/2: Obteniendo análisis de DataForSEO (modo live)...");
+  const dataForSeoSummary = await getOnPageSummaryInstantly(url, dataForSeoLogin, dataForSeoPassword);
   
   // Map the real DataForSEO data to the structure Gemini expects
   const mappedDataForPrompt = mapDataForSeoToPromptStructure(dataForSeoSummary, url);
@@ -493,7 +440,7 @@ export const generateSeoReport = async (
   // console.log("Mapped DataForSEO for Gemini prompt:", dataForSeoJsonString);
 
 
-  setLoadingMessage("Paso 4/4: Generando informe con IA de Gemini...");
+  setLoadingMessage("Paso 2/2: Generando informe con IA de Gemini...");
   const ai = new GoogleGenAI({ apiKey: geminiApiKey });
   const prompt = PROMPT_TEMPLATE(url, dataForSeoJsonString);
 
