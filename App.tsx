@@ -74,12 +74,12 @@ const App: React.FC = () => {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-sky-900 text-slate-100 flex flex-col items-center p-4 selection:bg-sky-500 selection:text-white">
+    <div className="min-h-screen bg-gray-100 text-gray-800 flex flex-col items-center p-4">
       <Header title={APP_TITLE} />
-      <main className="container mx-auto px-4 py-8 flex-grow w-full max-w-4xl">
-        <div className="bg-slate-800 shadow-2xl rounded-xl p-6 md:p-10 transform transition-all duration-500 hover:scale-[1.01]">
-          <p className="text-center text-slate-300 mb-6 text-lg">
-            Introduce la URL de un sitio web para generar un análisis SEO utilizando datos reales de DataForSEO e interpretados por IA.
+      <main className="container mx-auto px-4 py-8 flex-grow w-full max-w-5xl">
+        <div className="bg-white shadow-xl rounded-xl p-6 md:p-10">
+          <p className="text-center text-gray-600 mb-6 text-lg">
+            Introduce la URL de un sitio web para generar un análisis SEO completo.
           </p>
           <UrlInputForm onSubmit={handleSubmit} isLoading={isLoading} />
           

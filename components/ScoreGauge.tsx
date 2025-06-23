@@ -10,25 +10,25 @@ interface ScoreGaugeProps {
 }
 
 const ScoreGauge: React.FC<ScoreGaugeProps> = ({ score, title }) => {
-  const scoreColor = score > 89 ? '#4caf50' : score > 49 ? '#ff9800' : '#f44336';
+  const scoreColor = score > 89 ? '#22c55e' : score > 49 ? '#f59e0b' : '#ef4444'; // green-500, amber-500, red-500
 
   const data = {
     datasets: [
       {
         data: [score, 100 - score],
-        backgroundColor: [scoreColor, '#e0e0e0'],
-        borderColor: [scoreColor, '#e0e0e0'],
-        borderWidth: 1,
-        circumference: 180,
-        rotation: 270,
+        backgroundColor: [scoreColor, '#f3f4f6'], // bg-gray-100
+        borderColor: [scoreColor, '#f3f4f6'],
+        borderWidth: 0,
+        circumference: 360,
+        rotation: 0,
       },
     ],
   };
 
   const options = {
     responsive: true,
-    maintainAspectRatio: true,
-    cutout: '80%',
+    maintainAspectRatio: false,
+    cutout: '75%',
     plugins: {
       legend: {
         display: false,
@@ -40,26 +40,16 @@ const ScoreGauge: React.FC<ScoreGaugeProps> = ({ score, title }) => {
   };
 
   return (
-    <div style={{ textAlign: 'center', width: '150px', margin: '0 auto' }}>
-      <div style={{ position: 'relative', width: '100%', paddingTop: '50%' }}>
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
-          <Doughnut data={data} options={options} />
-          <div
-            style={{
-              position: 'absolute',
-              top: '60%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              fontSize: '2rem',
-              fontWeight: 'bold',
-              color: scoreColor,
-            }}
-          >
+    <div className="flex flex-col items-center justify-center p-4 bg-white rounded-lg shadow">
+      <div className="relative w-32 h-32">
+        <Doughnut data={data} options={options} />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-3xl font-bold" style={{ color: scoreColor }}>
             {score}
-          </div>
+          </span>
         </div>
       </div>
-      <h3 style={{ marginTop: '-1rem', fontWeight: 'normal' }}>{title}</h3>
+      <h3 className="mt-2 text-lg font-semibold text-gray-700">{title}</h3>
     </div>
   );
 };
