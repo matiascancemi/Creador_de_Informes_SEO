@@ -1,0 +1,5 @@
+{
+  "name": "Generador de Informes SEO con IA",
+  "description": "Una aplicación web para generar informes SEO básicos, identificando puntos de mejora y problemáticas actuales de un sitio web utilizando IA de Gemini. Ideal para obtener una visión preliminar del SEO on-page y off-page.",
+  "requestFramePermissions": []
+}
