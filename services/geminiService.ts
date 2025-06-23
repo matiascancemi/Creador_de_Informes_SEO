@@ -119,13 +119,19 @@ const getOnPageSummaryInstantly = async (targetUrl: string, login: string, passw
   // El endpoint instant_pages espera un objeto, no un array de objetos.
   const response = await dataForSeoRequest(ON_PAGE_INSTANT_PAGES_ENDPOINT, login, password, 'POST', [payload]);
 
-  if (response.status_code !== 20000 || !response.tasks || response.tasks.length === 0 || !response.tasks[0].result || response.tasks[0].result.length === 0) {
-    throw new Error(`Failed to get OnPage Instant Summary for url ${targetUrl}: ${response.status_message}. Full response: ${JSON.stringify(response)}`);
+  // Comprobaciones de seguridad mejoradas para evitar errores de 'length' en nulos.
+  if (response.status_code !== 20000 || !response.tasks || response.tasks.length === 0) {
+    throw new Error(`DataForSEO task failed or returned no tasks: ${response.status_message}. Full response: ${JSON.stringify(response)}`);
+  }
+
+  const task = response.tasks[0];
+  if (!task.result || task.result.length === 0) {
+      throw new Error(`Task from DataForSEO did not return a result array or it was empty. Status: ${task.status_message}. Full response: ${JSON.stringify(response)}`);
   }
   
   // La estructura de la respuesta de instant_pages es un poco diferente.
   // El resultado está en tasks[0].result[0].items[0]
-  const resultItem = response.tasks[0].result[0];
+  const resultItem = task.result[0];
   if (!resultItem || !resultItem.items || resultItem.items.length === 0) {
      throw new Error(`No summary items found in DataForSEO instant response for ${targetUrl}. Full response: ${JSON.stringify(response)}`);
   }
