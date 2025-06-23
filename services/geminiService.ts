@@ -4,13 +4,11 @@ import type { GeminiSeoReportResponse, SeoReportData } from '../types';
 import { 
   GEMINI_MODEL_NAME,
   DATA_FOR_SEO_BASE_URL,
-  ON_PAGE_INSTANT_PAGES_ENDPOINT, // Usaremos el endpoint de resultados instantáneos
-  // Los siguientes ya no son necesarios para el modo live
-  // ON_PAGE_TASK_POST_ENDPOINT,
-  // ON_PAGE_ID_LIST_ENDPOINT,
-  // ON_PAGE_SUMMARY_ENDPOINT,
-  // DATA_FOR_SEO_POLL_INTERVAL_MS,
-  // DATA_FOR_SEO_MAX_POLLS
+  // On-Page
+  ON_PAGE_INSTANT_PAGES_ENDPOINT,
+  ON_PAGE_LIGHTHOUSE_LIVE_ENDPOINT,
+  // Off-Page
+  BACKLINKS_SUMMARY_LIVE_ENDPOINT
 } from '../constants';
 
 // --- DataForSEO API Interaction ---
@@ -21,6 +19,72 @@ interface DataForSeoInstantPayload {
   load_resources?: boolean;
   enable_javascript?: boolean;
   // Add other parameters as needed from https://docs.dataforseo.com/v3/on_page/instant_pages
+}
+
+// Payload para Lighthouse
+interface DataForSeoLighthousePayload {
+  url: string;
+  for_mobile?: boolean;
+}
+
+// Payload para Backlinks Summary
+interface DataForSeoBacklinksSummaryPayload {
+    target: string;
+    // Se pueden agregar más filtros si es necesario
+}
+
+
+// --- DataForSEO API Result Interfaces (Simplified) ---
+
+// Interfaz para el resultado de Lighthouse
+// Based on https://docs.dataforseo.com/v3/on_page/lighthouse/live
+interface DataForSeoLighthouseResult {
+  lighthouse_version: string;
+  audits: {
+    "final-screenshot": {
+      details?: {
+        data: string; // base64 image
+      }
+    },
+    "metrics": {
+      details?: {
+        items: Array<{
+          largest_contentful_paint?: number;
+          cumulative_layout_shift?: number;
+          total_blocking_time?: number;
+          interactive?: number; // TTI
+        }>
+      }
+    }
+    // Se pueden agregar más auditorías según sea necesario
+  };
+  categories: {
+    performance: {
+      score: number; // 0-1
+    },
+    accessibility: {
+      score: number;
+    },
+    "best-practices": {
+      score: number;
+    },
+    seo: {
+      score: number;
+    }
+  }
+}
+
+// Interfaz para el resultado de Backlinks Summary
+// Based on https://docs.dataforseo.com/v3/backlinks/summary/live
+interface DataForSeoBacklinksSummaryResult {
+    target: string;
+    first_seen: string;
+    rank: number;
+    backlinks: number;
+    referring_pages: number;
+    referring_domains: number;
+    referring_main_domains: number;
+    // Y muchos más campos que se pueden agregar...
 }
 
 
@@ -139,10 +203,74 @@ const getOnPageSummaryInstantly = async (targetUrl: string, login: string, passw
   return resultItem.items[0] as DataForSeoOnPageSummaryItem;
 };
 
+// 2. Get Lighthouse report instantly (Live Mode)
+const getLighthouseReport = async (targetUrl: string, login: string, password: string, forMobile: boolean = false): Promise<DataForSeoLighthouseResult | null> => {
+  const payload: DataForSeoLighthousePayload = {
+    url: targetUrl,
+    for_mobile: forMobile,
+  };
+
+  try {
+    const response = await dataForSeoRequest(ON_PAGE_LIGHTHOUSE_LIVE_ENDPOINT, login, password, 'POST', [payload]);
+
+    if (response.status_code !== 20000 || !response.tasks || response.tasks.length === 0) {
+      console.warn(`Lighthouse task failed or returned no tasks: ${response.status_message}`);
+      return null;
+    }
+
+    const task = response.tasks[0];
+    if (task.status_code !== 20000 || !task.result || task.result.length === 0) {
+      console.warn(`Lighthouse task did not return a result. Status: ${task.status_message}`);
+      return null;
+    }
+    
+    return task.result[0].items[0] as DataForSeoLighthouseResult;
+
+  } catch (error) {
+    console.error(`Error fetching Lighthouse report for ${targetUrl}:`, error);
+    return null; // No detener todo el proceso si Lighthouse falla
+  }
+};
+
+// 3. Get Backlinks Summary instantly (Live Mode)
+const getBacklinksSummary = async (targetUrl: string, login: string, password: string): Promise<DataForSeoBacklinksSummaryResult | null> => {
+    const payload: DataForSeoBacklinksSummaryPayload = {
+        target: targetUrl,
+    };
+
+    try {
+        const response = await dataForSeoRequest(BACKLINKS_SUMMARY_LIVE_ENDPOINT, login, password, 'POST', [payload]);
+
+        if (response.status_code !== 20000 || !response.tasks || response.tasks.length === 0) {
+            console.warn(`Backlinks Summary task failed or returned no tasks: ${response.status_message}`);
+            return null;
+        }
+
+        const task = response.tasks[0];
+        if (task.status_code !== 20000 || !task.result || task.result.length === 0) {
+            console.warn(`Backlinks Summary task did not return a result. Status: ${task.status_message}`);
+            return null;
+        }
+        
+        return task.result[0] as DataForSeoBacklinksSummaryResult;
+
+    } catch (error) {
+        console.error(`Error fetching Backlinks Summary for ${targetUrl}:`, error);
+        return null; // No detener todo el proceso si falla
+    }
+};
+
+
 // --- Data Mapping ---
 // This is a crucial step. Maps the complex DataForSEO response to the simplified structure Gemini expects.
+// This is a crucial step. Maps the complex DataForSEO response to the simplified structure Gemini expects.
 // This will need significant refinement based on actual API responses and desired report depth.
-const mapDataForSeoToPromptStructure = (summary: DataForSeoOnPageSummaryItem, url: string): Partial<MockDataForSeoResponseForPrompt> => {
+const mapDataForSeoToPromptStructure = (
+  url: string,
+  summary: DataForSeoOnPageSummaryItem,
+  lighthouse: DataForSeoLighthouseResult | null,
+  backlinks: DataForSeoBacklinksSummaryResult | null
+): Partial<MockDataForSeoResponseForPrompt> => {
   
   // This is the structure Gemini was trained on with the mock data. We adapt to it.
   // We'll call this MockDataForSeoResponseForPrompt as it's what we *feed* to the prompt.
@@ -171,12 +299,11 @@ const mapDataForSeoToPromptStructure = (summary: DataForSeoOnPageSummaryItem, ur
         // average_image_size_kb requires calculation or different endpoint
       },
       page_speed: {
-        largest_contentful_paint_ms: summary.page_timing?.largest_contentful_paint ? Math.round(summary.page_timing.largest_contentful_paint * 1000) : undefined,
-        // total_blocking_time_ms needs specific check (TBT often from Lighthouse or similar)
-        // first_input_delay_ms from DataForSEO is often FID, not TBT. Use if available.
-        total_blocking_time_ms: summary.page_timing?.first_input_delay ? Math.round(summary.page_timing.first_input_delay * 1000) : undefined,
-        cumulative_layout_shift: summary.page_timing?.cumulative_layout_shift,
-        performance_score: summary.page_timing?.onpage_score,
+        // Usar datos de Lighthouse si están disponibles, si no, los del resumen.
+        largest_contentful_paint_ms: lighthouse?.audits.metrics?.details?.items[0]?.largest_contentful_paint,
+        total_blocking_time_ms: lighthouse?.audits.metrics?.details?.items[0]?.total_blocking_time,
+        cumulative_layout_shift: lighthouse?.audits.metrics?.details?.items[0]?.cumulative_layout_shift,
+        performance_score: lighthouse ? Math.round(lighthouse.categories.performance.score * 100) : summary.page_timing?.onpage_score,
       },
       mobile_friendliness: {
         // 'mobile_friendly' check might be in summary.checks.is_mobile_friendly
@@ -201,10 +328,10 @@ const mapDataForSeoToPromptStructure = (summary: DataForSeoOnPageSummaryItem, ur
     // Off-page summary data is NOT available from OnPage Summary endpoint.
     // Gemini will be instructed that this data might be missing.
     off_page_summary: { 
-        // These fields will be mostly undefined using only OnPage Summary
-        estimated_domain_authority: undefined,
-        referring_domains_count: undefined,
-        backlinks_count: undefined,
+        // Rellenar con datos de Backlinks Summary si están disponibles
+        estimated_domain_authority: backlinks?.rank,
+        referring_domains_count: backlinks?.referring_domains,
+        backlinks_count: backlinks?.backlinks,
     }
   };
   return mapped;
@@ -265,26 +392,26 @@ const getGeminiApiKey = (): string | undefined => {
 
 // Updated prompt to acknowledge real data source and potential missing off-page data
 const PROMPT_TEMPLATE = (url: string, dataForSeoJsonString: string): string => `
-Eres un experto analista SEO de renombre mundial. Se te ha proporcionado un conjunto de datos técnicos obtenidos directamente de la API OnPage Summary de DataForSEO para el sitio web con URL "${url}".
-Tu tarea es interpretar estos datos y generar un informe SEO exhaustivo y accionable.
+Eres un experto analista SEO de renombre mundial. Se te ha proporcionado un conjunto de datos técnicos agregados de varios endpoints de la API de DataForSEO (OnPage Summary, Lighthouse, Backlinks Summary) para el sitio web con URL "${url}".
+Tu tarea es interpretar todos estos datos y generar un informe SEO holístico, exhaustivo y accionable.
 
-Datos de DataForSEO OnPage Summary:
+Datos Agregados de DataForSEO:
 \`\`\`json
 ${dataForSeoJsonString}
 \`\`\`
 
 Instrucciones detalladas:
-1.  Analiza CUIDADOSAMENTE los datos de DataForSEO proporcionados. Estos son datos reales del endpoint 'OnPage Summary'.
+1.  Analiza CUIDADOSAMENTE todos los datos de DataForSEO proporcionados. Provienen de diferentes fuentes (On-Page, Lighthouse, Backlinks) y deben ser integrados en un análisis coherente.
 2.  Para cada "factorName" en "onPageAnalysis":
-    *   Rellena el campo "currentObservation" basándote ESTRICTAMENTE en los datos de DataForSEO.
-    *   Si un dato específico está presente (ej: \`page_title\`), úsalo directamente. Menciona el valor si es relevante.
-    *   Si un dato específico no está explícitamente en el JSON de DataForSEO (ej. algunos aspectos de \`off_page_summary\` o métricas muy detalladas no cubiertas por OnPage Summary), indícalo claramente (ej: "DataForSEO OnPage Summary no proporcionó datos específicos sobre X." o "No se encontraron datos sobre X en la información de DataForSEO OnPage Summary.").
+    *   Rellena el campo "currentObservation" basándote ESTRICTAMENTE en los datos disponibles.
+    *   Prioriza los datos de Lighthouse para las métricas de Page Speed (LCP, TBT, CLS, Performance Score). Si no están, usa los de OnPage Summary.
+    *   Si un dato específico no está en el JSON, indícalo claramente (ej: "No se encontraron datos sobre X.").
     *   "importance" debe explicar por qué el factor es crucial.
-    *   "recommendation" debe ser coherente con la "currentObservation" derivada de DataForSEO.
+    *   "recommendation" debe ser coherente con la "currentObservation".
 3.  Para la sección "offPageAnalysis":
-    *   Ten en cuenta que el endpoint OnPage Summary de DataForSEO tiene un enfoque limitado en datos off-page.
-    *   Rellena "currentObservation" con la información disponible. Si no hay datos directos del OnPage Summary para un factor off-page, indícalo claramente (ej: "Los datos de OnPage Summary de DataForSEO no incluyen X.").
-    *   Las recomendaciones para off-page pueden ser más generales si los datos son limitados.
+    *   Utiliza los datos del endpoint de Backlinks Summary. Ya no son datos limitados.
+    *   Rellena "currentObservation" con los valores de 'rank' (autoridad), 'referring_domains_count' y 'backlinks_count'.
+    *   Si los datos de backlinks no estuvieran disponibles por alguna razón, indícalo.
 4.  Para "overallSummary":
     *   "strengths" y "weaknesses" deben basarse ÚNICAMENTE en tu análisis de los datos de DataForSEO.
     *   "topRecommendations" deben ser acciones priorizadas basadas en los datos.
@@ -362,20 +489,20 @@ Formato JSON de Salida Esperado (igual que antes, pero las observaciones serán 
     ]
   },
   "offPageAnalysis": {
-    "title": "Análisis SEO Off-Page (Basado en Datos de DataForSEO OnPage Summary)",
-    "introduction": "Evaluación de factores SEO externos a ${url}, utilizando los datos disponibles de DataForSEO OnPage Summary. Estos factores influyen en la autoridad y percepción del sitio. El OnPage Summary ofrece datos limitados para el off-page.",
+    "title": "Análisis SEO Off-Page (Basado en Datos de DataForSEO)",
+    "introduction": "Evaluación de factores SEO externos a ${url}, utilizando datos de la API de Backlinks de DataForSEO. Estos factores son cruciales para la autoridad, confianza y popularidad del sitio en la web.",
     "factors": [
       {
-        "factorName": "Perfil de Backlinks (Cantidad y Dominios de Referencia)",
-        "currentObservation": "[GEMINI: Basado en 'off_page_summary' (referring_domains_count, backlinks_count) del JSON provisto. Si no hay datos, indicar 'DataForSEO OnPage Summary no proporciona estos datos detallados.']",
-        "importance": "Los backlinks de calidad son un fuerte indicador de autoridad y confianza para los motores de búsqueda.",
-        "recommendation": "[GEMINI: Enfocarse en adquirir backlinks de alta calidad de sitios relevantes. Diversificar el perfil de enlaces. Si no hay datos, sugerir usar herramientas específicas de backlinks.]"
+        "factorName": "Autoridad de Dominio (Rank)",
+        "currentObservation": "[GEMINI: Basado en 'off_page_summary.estimated_domain_authority'. Ej: 'La autoridad de dominio estimada (Rank de DataForSEO) es X/100.']",
+        "importance": "Una métrica predictiva (0-100) de la capacidad de un sitio para rankear. Se construye con el tiempo y es un indicador clave de la fortaleza del perfil de enlaces.",
+        "recommendation": "[GEMINI: Si el rank es bajo, enfocarse en mejorar la autoridad general mediante la creación de contenido de calidad y la obtención de backlinks autorizados.]"
       },
       {
-        "factorName": "Autoridad de Dominio Estimada",
-        "currentObservation": "[GEMINI: Basado en 'off_page_summary' (estimated_domain_authority). Si no, indicar 'DataForSEO OnPage Summary no proporciona esta métrica.']",
-        "importance": "Una métrica predictiva de la capacidad de un sitio para rankear. Se construye con el tiempo.",
-        "recommendation": "[GEMINI: Mejorar la autoridad general del dominio mediante la creación de contenido de calidad y la obtención de backlinks autorizados. Si no hay datos, sugerir consultar herramientas especializadas.]"
+        "factorName": "Perfil de Backlinks (Cantidad y Dominios de Referencia)",
+        "currentObservation": "[GEMINI: Basado en 'off_page_summary' (referring_domains_count, backlinks_count). Ej: 'El sitio tiene X backlinks provenientes de Y dominios de referencia.']",
+        "importance": "Los backlinks de calidad son un fuerte indicador de autoridad. Es importante no solo la cantidad total, sino la diversidad y calidad de los dominios que enlazan.",
+        "recommendation": "[GEMINI: Analizar la calidad de los dominios de referencia. Enfocarse en adquirir backlinks de alta calidad de sitios relevantes y diversificar el perfil de enlaces.]"
       },
       {
         "factorName": "Presencia en SEO Local (Google Business Profile)",
@@ -438,17 +565,39 @@ export const generateSeoReport = async (
      throw new Error("Credenciales de DataForSEO (login/password) no configuradas.");
   }
 
-  setLoadingMessage("Paso 1/2: Obteniendo análisis de DataForSEO (modo live)...");
-  const dataForSeoSummary = await getOnPageSummaryInstantly(url, dataForSeoLogin, dataForSeoPassword);
+  setLoadingMessage("Paso 1/3: Obteniendo análisis On-Page de DataForSEO...");
   
+  // Ejecutar llamadas a la API en paralelo para eficiencia
+  const results = await Promise.allSettled([
+    getOnPageSummaryInstantly(url, dataForSeoLogin, dataForSeoPassword),
+    getLighthouseReport(url, dataForSeoLogin, dataForSeoPassword, true), // for mobile
+    getBacklinksSummary(url, dataForSeoLogin, dataForSeoPassword)
+  ]);
+
+  // Procesar resultados
+  const summaryResult = results[0];
+  const lighthouseResult = results[1];
+  const backlinksResult = results[2];
+
+  if (summaryResult.status === 'rejected') {
+    // Si la llamada principal (resumen) falla, no podemos continuar.
+    throw summaryResult.reason;
+  }
+  
+  const dataForSeoSummary = summaryResult.value;
+  const lighthouseData = lighthouseResult.status === 'fulfilled' ? lighthouseResult.value : null;
+  const backlinksData = backlinksResult.status === 'fulfilled' ? backlinksResult.value : null;
+
+
+  setLoadingMessage("Paso 2/3: Mapeando datos para el análisis de IA...");
   // Map the real DataForSEO data to the structure Gemini expects
-  const mappedDataForPrompt = mapDataForSeoToPromptStructure(dataForSeoSummary, url);
+  const mappedDataForPrompt = mapDataForSeoToPromptStructure(url, dataForSeoSummary, lighthouseData, backlinksData);
   const dataForSeoJsonString = JSON.stringify(mappedDataForPrompt, null, 2);
   
   // console.log("Mapped DataForSEO for Gemini prompt:", dataForSeoJsonString);
 
 
-  setLoadingMessage("Paso 2/2: Generando informe con IA de Gemini...");
+  setLoadingMessage("Paso 3/3: Generando informe con IA de Gemini...");
   const ai = new GoogleGenAI({ apiKey: geminiApiKey });
   const prompt = PROMPT_TEMPLATE(url, dataForSeoJsonString);
 
